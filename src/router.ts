@@ -1,14 +1,13 @@
-import type { LanguageModel } from 'ai';
 import type { AIRouter, RouterConfig, RouterRequest } from './types.js';
 
 /**
  * Internal router implementation class.
  */
-class Router<T extends string = string> implements AIRouter<T> {
-  private models: Record<T, LanguageModel>;
+class Router<T extends string = string, TModel = unknown> implements AIRouter<T, TModel> {
+  private models: Record<T, TModel>;
   private selectFn: (request: RouterRequest) => T;
 
-  constructor(config: RouterConfig<T>) {
+  constructor(config: RouterConfig<TModel, T>) {
     this.models = config.models;
     this.selectFn = config.select;
     this.validateConfig();
@@ -24,29 +23,29 @@ class Router<T extends string = string> implements AIRouter<T> {
     }
   }
 
-  selectModel(request: Partial<RouterRequest>): LanguageModel {
+  selectModel(request: Partial<RouterRequest>): TModel {
     const normalizedRequest: RouterRequest = {
       prompt: request.prompt ?? '',
       messages: request.messages ?? [],
       ...request,
     };
 
-    const selectedTier = this.selectFn(normalizedRequest);
+    const selectedRoute = this.selectFn(normalizedRequest);
 
-    if (!(selectedTier in this.models)) {
+    if (!(selectedRoute in this.models)) {
       throw new Error(
-        `Selected tier "${selectedTier}" does not exist in models. Available tiers: ${this.getTiers().join(', ')}`
+        `Selected route "${selectedRoute}" does not exist in models. Available routes: ${this.getRoutes().join(', ')}`
       );
     }
 
-    return this.models[selectedTier];
+    return this.models[selectedRoute];
   }
 
-  getModel(tier: T): LanguageModel | undefined {
-    return this.models[tier];
+  getModel(route: T): TModel | undefined {
+    return this.models[route];
   }
 
-  getTiers(): T[] {
+  getRoutes(): T[] {
     return Object.keys(this.models) as T[];
   }
 }
@@ -54,7 +53,8 @@ class Router<T extends string = string> implements AIRouter<T> {
 /**
  * Create a new AI router
  *
- * @template T - Union type of tier name strings
+ * @template TModel - The model type (automatically inferred from your models)
+ * @template T - The models record type (automatically inferred)
  * @param config - Router configuration with models and select function
  * @returns AIRouter instance
  *
@@ -84,9 +84,9 @@ class Router<T extends string = string> implements AIRouter<T> {
  * const result = await generateText({ model, prompt: 'Hello!' });
  * ```
  */
-export function createRouter<const T extends Record<string, LanguageModel>>(config: {
+export function createRouter<TModel, const T extends Record<string, TModel>>(config: {
   models: T;
   select: (request: RouterRequest) => keyof T;
-}): AIRouter<keyof T & string> {
-  return new Router(config as RouterConfig<keyof T & string>);
+}): AIRouter<keyof T & string, T[keyof T]> {
+  return new Router(config as RouterConfig<T[keyof T], keyof T & string>);
 }

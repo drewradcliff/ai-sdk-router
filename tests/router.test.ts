@@ -20,7 +20,7 @@ describe('createRouter', () => {
     expect(router).toBeDefined();
     expect(router.selectModel).toBeDefined();
     expect(router.getModel).toBeDefined();
-    expect(router.getTiers).toBeDefined();
+    expect(router.getRoutes).toBeDefined();
   });
 
   it('should throw error when models are empty', () => {
@@ -124,7 +124,7 @@ describe('AIRouter.selectModel', () => {
     expect(router.selectModel({ complexity: 'high' })).toBe(mockSmartModel);
   });
 
-  it('should throw error when select returns invalid tier', () => {
+  it('should throw error when select returns invalid route', () => {
     const router = createRouter({
       models: {
         fast: mockFastModel,
@@ -133,13 +133,13 @@ describe('AIRouter.selectModel', () => {
     });
 
     expect(() => router.selectModel({})).toThrow(
-      'Selected tier "nonexistent" does not exist in models'
+      'Selected route "nonexistent" does not exist in models'
     );
   });
 });
 
 describe('AIRouter.getModel', () => {
-  it('should return model for valid tier', () => {
+  it('should return model for valid route', () => {
     const router = createRouter({
       models: {
         fast: mockFastModel,
@@ -152,7 +152,7 @@ describe('AIRouter.getModel', () => {
     expect(router.getModel('smart')).toBe(mockSmartModel);
   });
 
-  it('should return undefined for invalid tier', () => {
+  it('should return undefined for invalid route', () => {
     const router = createRouter({
       models: {
         fast: mockFastModel,
@@ -164,8 +164,8 @@ describe('AIRouter.getModel', () => {
   });
 });
 
-describe('AIRouter.getTiers', () => {
-  it('should return all tier names', () => {
+describe('AIRouter.getRoutes', () => {
+  it('should return all route names', () => {
     const router = createRouter({
       models: {
         fast: mockFastModel,
@@ -175,14 +175,14 @@ describe('AIRouter.getTiers', () => {
       select: () => 'fast',
     });
 
-    const tiers = router.getTiers();
-    expect(tiers).toHaveLength(3);
-    expect(tiers).toContain('fast');
-    expect(tiers).toContain('smart');
-    expect(tiers).toContain('deep');
+    const routes = router.getRoutes();
+    expect(routes).toHaveLength(3);
+    expect(routes).toContain('fast');
+    expect(routes).toContain('smart');
+    expect(routes).toContain('deep');
   });
 
-  it('should return tiers in correct order', () => {
+  it('should return routes in correct order', () => {
     const router = createRouter({
       models: {
         a: mockFastModel,
@@ -192,13 +192,13 @@ describe('AIRouter.getTiers', () => {
       select: () => 'a',
     });
 
-    const tiers = router.getTiers();
-    expect(tiers).toEqual(['a', 'b', 'c']);
+    const routes = router.getRoutes();
+    expect(routes).toEqual(['a', 'b', 'c']);
   });
 });
 
 describe('Type safety', () => {
-  it('should infer tier types from models object', () => {
+  it('should infer route types from models object', () => {
     const router = createRouter({
       models: {
         fast: mockFastModel,

@@ -4,8 +4,8 @@ Minimal, type-safe, AI router.
 
 ## Features
 
-- **Flexible** - Works with any AI SDK provider
-- **Retry utilities** - Built-in exponential backoff retry for resilient AI generations
+- Works with any AI SDK provider
+- Built-in exponential backoff retry for resilient AI generations
 
 ## Installation
 
@@ -27,7 +27,7 @@ import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { generateText } from 'ai';
 
-// Create router with tier-based model selection
+// Create router with model selection
 const router = createRouter({
   models: {
     fast: openai('gpt-3.5-turbo'),

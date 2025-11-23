@@ -35,9 +35,6 @@
   ],
   "author": "",
   "license": "MIT",
-  "peerDependencies": {
-    "ai": "^4.0.0"
-  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
@@ -50,4 +47,3 @@
     "vitest": "^2.0.0"
   }
 }
-
