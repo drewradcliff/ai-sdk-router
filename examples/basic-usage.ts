@@ -5,9 +5,13 @@
  * and use it with the Vercel AI SDK.
  */
 
-import { createRouter } from '../src/index.js';
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
+import { createRouter, retry } from '../src/index.js';
 import { generateText } from 'ai';
+// @ts-expect-error - Example only, packages may not be installed
 import { openai } from '@ai-sdk/openai';
+// @ts-expect-error - Example only, packages may not be installed
 import { anthropic } from '@ai-sdk/anthropic';
 
 // Create router with custom routing logic
@@ -17,7 +21,6 @@ const router = createRouter({
     smart: openai('gpt-4-turbo'),
     deep: anthropic('claude-3-5-sonnet-20241022'),
   },
-
   select: (request) => {
     // Route based on prompt length
     if (request.prompt.length > 1000) return 'deep';
@@ -30,7 +33,7 @@ const router = createRouter({
   },
 });
 
-// Example 1: Simple prompt-based routing
+// Example 1: Basic usage without retry
 async function example1() {
   const prompt = 'Explain quantum computing in simple terms';
   const model = router.selectModel({ prompt });
@@ -44,49 +47,43 @@ async function example1() {
   console.log(result.text);
 }
 
-// Example 2: Long prompt routing
+// Example 2: Using retry for resilient AI generation
 async function example2() {
-  const longPrompt = 'a'.repeat(1500) + ' Explain this in detail.';
-  const model = router.selectModel({ prompt: longPrompt });
+  const prompt = 'Write a detailed essay about renewable energy';
+  const model = router.selectModel({ prompt });
 
-  const result = await generateText({
-    model,
-    prompt: longPrompt,
-  });
+  const result = await retry(() => generateText({ model, prompt }), { maxRetries: 3 });
 
-  console.log('\nExample 2 - Long prompt (uses deep model):');
+  console.log('Example 2 - With retry:');
   console.log(result.text);
 }
 
-// Example 3: Direct model access
+// Example 3: Advanced retry with custom options
 async function example3() {
-  const model = router.getModel('smart');
+  const prompt = 'Explain machine learning algorithms';
+  const model = router.selectModel({ prompt });
 
-  if (model) {
-    const result = await generateText({
-      model,
-      prompt: 'What is the capital of France?',
-    });
+  const result = await retry(() => generateText({ model, prompt }), {
+    maxRetries: 5,
+    initialDelay: 500,
+    backoffMultiplier: 2,
+    shouldRetry: (error, attempt) => {
+      // Only retry on rate limit or timeout errors
+      if (error instanceof Error) {
+        return error.message.includes('rate limit') || error.message.includes('timeout');
+      }
+      return false;
+    },
+    onRetry: (error, attempt, delay) => {
+      console.log(`Retry attempt ${attempt} after ${delay}ms`);
+    },
+  });
 
-    console.log('\nExample 3 - Direct model access:');
-    console.log(result.text);
-  }
+  console.log('Example 3 - Advanced retry:');
+  console.log(result.text);
 }
 
-// Example 4: List available tiers
-function example4() {
-  const tiers = router.getTiers();
-  console.log('\nExample 4 - Available tiers:');
-  console.log(tiers);
-}
-
-// Run examples
-async function main() {
-  await example1();
-  await example2();
-  await example3();
-  example4();
-}
-
-// Uncomment to run:
-// main().catch(console.error);
+// Run examples (uncomment to execute)
+// example1();
+// example2();
+// example3();
