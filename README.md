@@ -46,43 +46,64 @@ const result = await generateText({
 });
 ```
 
-## Utilities
+## Retry with Exponential Backoff
 
-### Retry with Exponential Backoff
-
-#### Basic Retry
+Configure retry once at the router level - it automatically applies to all requests:
 
 ```ts
-import { retry } from 'ai-router';
+const model = createRouter({
+  models: {
+    fast: openai('gpt-3.5-turbo'),
+    deep: anthropic('claude-3-5-sonnet-20241022'),
+  },
+  select: (request) => {
+    if (request.prompt.length > 1000) return 'deep';
+    return 'fast';
+  },
+  retry: {
+    maxRetries: 3,
+    initialDelay: 1000,
+    maxDelay: 10000,
+    backoffMultiplier: 2,
+    shouldRetry: (error) => {
+      // Only retry rate limit and timeout errors
+      if (error instanceof Error) {
+        return error.message.includes('rate limit') || error.message.includes('timeout');
+      }
+      return false;
+    },
+    onRetry: (error, attempt, delay) => {
+      console.log(`Retry ${attempt} after ${delay}ms`);
+    },
+  },
+});
 
-const result = await retry(() => generateText({ model, prompt: '...' }), { maxRetries: 3 });
+const result = await generateText({ model, prompt: '...' });
 ```
 
-#### Advanced Retry Options
+### Per-Model Retry Configuration
+
+Different retry policies for different models:
 
 ```ts
-const result = await retry(() => generateText({ model, prompt: '...' }), {
-  maxRetries: 5,
-  initialDelay: 500, // Start with 500ms delay
-  maxDelay: 10000, // Cap at 10 seconds
-  backoffMultiplier: 2, // Double delay each retry
-
-  // Only retry specific errors
-  shouldRetry: (error) => {
-    if (error instanceof Error) {
-      return error.message.includes('rate limit') || error.message.includes('timeout');
-    }
-    return false;
+const model = createRouter({
+  models: {
+    fast: openai('gpt-3.5-turbo'),
+    deep: anthropic('claude-3-5-sonnet-20241022'),
   },
-
-  // Log retry attempts
-  onRetry: (error, attempt, delay) => {
-    console.log(`Retry ${attempt} after ${delay}ms:`, error);
-  },
-
-  // Handle max retries exceeded
-  onMaxRetriesExceeded: (error, attempts) => {
-    console.error(`Failed after ${attempts} attempts`);
+  select: (request) => (request.prompt.length > 1000 ? 'deep' : 'fast'),
+  retry: {
+    fast: {
+      maxRetries: 2,
+      initialDelay: 500,
+    },
+    deep: {
+      maxRetries: 5,
+      initialDelay: 2000,
+    },
+    default: {
+      maxRetries: 3,
+    },
   },
 });
 ```

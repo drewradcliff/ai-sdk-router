@@ -7,7 +7,7 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
-import { createRouter, retry } from '../src/index.js';
+import { createRouter } from '../src/index.js';
 import { generateText } from 'ai';
 // @ts-expect-error - Example only, packages may not be installed
 import { openai } from '@ai-sdk/openai';
@@ -44,51 +44,45 @@ async function example1() {
   console.log(result.text);
 }
 
-// Example 2: Using retry for resilient AI generation
+// Example 2: Using router-level retry for resilience
+const modelWithRetry = createRouter({
+  models: {
+    fast: openai('gpt-3.5-turbo'),
+    smart: openai('gpt-4-turbo'),
+    deep: anthropic('claude-3-5-sonnet-20241022'),
+  },
+  select: (request) => {
+    if (request.prompt && request.prompt.length > 1000) return 'deep';
+    if (request.messages && request.messages.length > 10) return 'smart';
+    return 'fast';
+  },
+  retry: {
+    maxRetries: 3,
+    initialDelay: 1000,
+    shouldRetry: (error) => {
+      // Only retry on rate limit or timeout errors
+      if (error instanceof Error) {
+        return error.message.includes('rate limit') || error.message.includes('timeout');
+      }
+      return false;
+    },
+    onRetry: (error, attempt, delay) => {
+      console.log(`Retry attempt ${attempt} after ${delay}ms`);
+    },
+  },
+});
+
 async function example2() {
-  const result = await retry(
-    () =>
-      generateText({
-        model,
-        prompt: 'Write a detailed essay about renewable energy',
-      }),
-    { maxRetries: 3 }
-  );
+  // Retry is automatic - no wrapping needed!
+  const result = await generateText({
+    model: modelWithRetry,
+    prompt: 'Write a detailed essay about renewable energy',
+  });
 
-  console.log('Example 2 - With retry:');
-  console.log(result.text);
-}
-
-// Example 3: Advanced retry with custom options
-async function example3() {
-  const result = await retry(
-    () =>
-      generateText({
-        model,
-        prompt: 'Explain machine learning algorithms',
-      }),
-    {
-      maxRetries: 5,
-      initialDelay: 500,
-      backoffMultiplier: 2,
-      shouldRetry: (error, attempt) => {
-        // Only retry on rate limit or timeout errors
-        if (error instanceof Error) {
-          return error.message.includes('rate limit') || error.message.includes('timeout');
-        }
-        return false;
-      },
-      onRetry: (error, attempt, delay) => {
-        console.log(`Retry attempt ${attempt} after ${delay}ms`);
-      },
-    }
-  );
-
-  console.log('Example 3 - Advanced retry:');
+  console.log('Example 2 - With router-level retry:');
   console.log(result.text);
 }
 
 // Run examples (uncomment to execute)
 // example1();
 // example2();
-// example3();

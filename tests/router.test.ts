@@ -64,7 +64,8 @@ describe('createRouter', () => {
     expect(() =>
       createRouter({
         models: { fast: createMockModel('fast') },
-        select: undefined as any,
+        // @ts-expect-error - testing invalid config
+        select: undefined,
       })
     ).toThrow('Router configuration must include a select function');
   });
@@ -196,7 +197,8 @@ describe('Router model selection', () => {
       models: {
         fast: createMockModel('fast'),
       },
-      select: () => 'nonexistent' as any,
+      // @ts-expect-error - testing invalid route
+      select: () => 'nonexistent',
     });
 
     const options: LanguageModelV1CallOptions = {
@@ -210,9 +212,15 @@ describe('Router model selection', () => {
       ],
     };
 
-    await expect(model.doGenerate(options)).rejects.toThrow(
-      'Selected route "nonexistent" does not exist in models'
-    );
+    try {
+      await model.doGenerate(options);
+      expect.fail('Should have thrown an error');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        'Selected route "nonexistent" does not exist in models'
+      );
+    }
   });
 });
 
@@ -383,5 +391,415 @@ describe('AI SDK Integration', () => {
 
     expect(result2).toBeDefined();
     expect(result2.textStream).toBeDefined();
+  });
+});
+
+describe('Router retry functionality', () => {
+  it('should retry failed doGenerate calls', async () => {
+    let callCount = 0;
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'test',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        callCount++;
+        if (callCount < 3) {
+          throw new Error('rate limit exceeded');
+        }
+        return {
+          text: 'Success after retries',
+          finishReason: 'stop' as const,
+          usage: { promptTokens: 10, completionTokens: 20 },
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      retry: {
+        maxRetries: 3,
+        initialDelay: 10,
+        maxDelay: 100,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+    expect(result.text).toBe('Success after retries');
+    expect(mockModel.doGenerate).toHaveBeenCalledTimes(3);
+  });
+
+  it('should retry failed doStream calls', async () => {
+    let callCount = 0;
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'test',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(),
+      doStream: vi.fn(async () => {
+        callCount++;
+        if (callCount < 2) {
+          throw new Error('timeout error');
+        }
+        return {
+          stream: new ReadableStream(),
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      retry: {
+        maxRetries: 3,
+        initialDelay: 10,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doStream(options);
+    expect(result).toBeDefined();
+    expect(mockModel.doStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('should respect shouldRetry callback', async () => {
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'test',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        throw new Error('auth error');
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      retry: {
+        maxRetries: 3,
+        initialDelay: 10,
+        shouldRetry: (error) => {
+          // Don't retry auth errors
+          if (error instanceof Error && error.message.includes('auth')) {
+            return false;
+          }
+          return true;
+        },
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await expect(router.doGenerate(options)).rejects.toThrow('auth error');
+    // Should only be called once since we don't retry auth errors
+    expect(mockModel.doGenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it('should call onRetry callback', async () => {
+    let callCount = 0;
+    const onRetrySpy = vi.fn();
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'test',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        callCount++;
+        if (callCount < 3) {
+          throw new Error('rate limit');
+        }
+        return {
+          text: 'Success',
+          finishReason: 'stop' as const,
+          usage: { promptTokens: 10, completionTokens: 20 },
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      retry: {
+        maxRetries: 3,
+        initialDelay: 10,
+        onRetry: onRetrySpy,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await router.doGenerate(options);
+
+    // Should be called twice (for attempt 1 and 2, before the successful attempt 3)
+    expect(onRetrySpy).toHaveBeenCalledTimes(2);
+
+    // Verify the callback was called with correct parameters
+    expect(onRetrySpy).toHaveBeenCalledWith(expect.any(Error), 1, expect.any(Number));
+  });
+
+  it('should call onMaxRetriesExceeded callback', async () => {
+    const onMaxRetriesSpy = vi.fn();
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'test',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        throw new Error('persistent error');
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      retry: {
+        maxRetries: 2,
+        initialDelay: 10,
+        onMaxRetriesExceeded: onMaxRetriesSpy,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await expect(router.doGenerate(options)).rejects.toThrow('persistent error');
+
+    // Should be called once when retries are exhausted
+    expect(onMaxRetriesSpy).toHaveBeenCalledTimes(1);
+    expect(onMaxRetriesSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      3 // total attempts (initial + 2 retries)
+    );
+  });
+
+  it('should use per-model retry configuration', async () => {
+    let fastCalls = 0;
+    let deepCalls = 0;
+
+    const fastModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'fast',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        fastCalls++;
+        if (fastCalls < 2) {
+          throw new Error('error');
+        }
+        return {
+          text: 'Fast success',
+          finishReason: 'stop' as const,
+          usage: { promptTokens: 10, completionTokens: 20 },
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const deepModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'deep',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        deepCalls++;
+        if (deepCalls < 4) {
+          throw new Error('error');
+        }
+        return {
+          text: 'Deep success',
+          finishReason: 'stop' as const,
+          usage: { promptTokens: 10, completionTokens: 20 },
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { fast: fastModel, deep: deepModel },
+      select: (request) => {
+        if (request.prompt && request.prompt.length > 50) return 'deep';
+        return 'fast';
+      },
+      retry: {
+        fast: { maxRetries: 2, initialDelay: 10 },
+        deep: { maxRetries: 5, initialDelay: 10 },
+        default: { maxRetries: 1 },
+      },
+    });
+
+    // Fast model with short prompt
+    const shortOptions: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const fastResult = await router.doGenerate(shortOptions);
+    expect(fastResult.text).toBe('Fast success');
+    expect(fastModel.doGenerate).toHaveBeenCalledTimes(2);
+
+    // Deep model with long prompt
+    const longOptions: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'a'.repeat(100) }] }],
+    };
+
+    const deepResult = await router.doGenerate(longOptions);
+    expect(deepResult.text).toBe('Deep success');
+    expect(deepModel.doGenerate).toHaveBeenCalledTimes(4);
+  });
+
+  it('should work without retry configuration', async () => {
+    const mockModel = createMockModel('test');
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      // No retry configuration
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+    expect(result).toBeDefined();
+    expect(mockModel.doGenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it('should use exponential backoff', async () => {
+    let callCount = 0;
+    const callTimes: number[] = [];
+
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'test',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        callCount++;
+        callTimes.push(Date.now());
+        if (callCount < 4) {
+          throw new Error('retry');
+        }
+        return {
+          text: 'Success',
+          finishReason: 'stop' as const,
+          usage: { promptTokens: 10, completionTokens: 20 },
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      retry: {
+        maxRetries: 5,
+        initialDelay: 100,
+        backoffMultiplier: 2,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await router.doGenerate(options);
+
+    // Verify exponential backoff timing
+    // First retry: ~100ms, second: ~200ms, third: ~400ms
+    expect(callTimes[1] - callTimes[0]).toBeGreaterThanOrEqual(95);
+    expect(callTimes[2] - callTimes[1]).toBeGreaterThanOrEqual(195);
+    expect(callTimes[3] - callTimes[2]).toBeGreaterThanOrEqual(395);
+  });
+
+  it('should respect maxDelay', async () => {
+    let callCount = 0;
+    const callTimes: number[] = [];
+
+    const mockModel: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'test',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        callCount++;
+        callTimes.push(Date.now());
+        if (callCount < 4) {
+          throw new Error('retry');
+        }
+        return {
+          text: 'Success',
+          finishReason: 'stop' as const,
+          usage: { promptTokens: 10, completionTokens: 20 },
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const router = createRouter({
+      models: { test: mockModel },
+      select: () => 'test',
+      retry: {
+        maxRetries: 5,
+        initialDelay: 100,
+        maxDelay: 150, // Cap at 150ms
+        backoffMultiplier: 2,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await router.doGenerate(options);
+
+    // Second retry would be 200ms but should be capped at 150ms
+    expect(callTimes[2] - callTimes[1]).toBeLessThan(200);
+    expect(callTimes[2] - callTimes[1]).toBeGreaterThanOrEqual(145);
   });
 });
