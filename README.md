@@ -1,22 +1,22 @@
 # ai-router
 
-Minimal, type-safe, AI router.
+Intelligent model routing for ai-sdk.
 
 ## Features
 
-- Works with any AI SDK provider
-- Built-in exponential backoff retry for resilient AI generations
+- Route requests to different models based on prompt length, complexity, or any custom logic
+- Thin wrapper around AI SDK
 
 ## Installation
 
 ```bash
-pnpm add ai-router
+pnpm add ai-router ai
 ```
 
-You'll also need model providers if not already installed:
+You'll also need model providers:
 
 ```bash
-pnpm add ai @ai-sdk/openai @ai-sdk/anthropic
+pnpm add @ai-sdk/openai @ai-sdk/anthropic
 ```
 
 ## Quick Start
@@ -27,51 +27,41 @@ import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { generateText } from 'ai';
 
-// Create router with model selection
-const router = createRouter({
+const model = createRouter({
   models: {
     fast: openai('gpt-3.5-turbo'),
-    smart: openai('gpt-4-turbo'),
     deep: anthropic('claude-3-5-sonnet-20241022'),
   },
-
-  // Define your routing logic
   select: (request) => {
-    if (request.prompt?.length > 1000) return 'deep';
-    if (request.messages?.length > 10) return 'smart';
+    if (request.prompt.length > 1000) {
+      return 'deep';
+    }
     return 'fast';
   },
 });
 
-// Use with AI SDK
-const prompt = 'Explain quantum computing';
-const model = router.selectModel({ prompt });
-
 const result = await generateText({
   model,
-  prompt,
+  prompt: 'Explain quantum computing',
 });
 ```
 
 ## Utilities
 
-### Retry
-
-The library includes retry utility with exponential backoff:
+### Retry with Exponential Backoff
 
 #### Basic Retry
 
 ```ts
 import { retry } from 'ai-router';
 
-const model = router.selectModel({ prompt });
-const result = await retry(() => generateText({ model, prompt }), { maxRetries: 3 });
+const result = await retry(() => generateText({ model, prompt: '...' }), { maxRetries: 3 });
 ```
 
 #### Advanced Retry Options
 
 ```ts
-const result = await retry(() => generateText({ model, prompt }), {
+const result = await retry(() => generateText({ model, prompt: '...' }), {
   maxRetries: 5,
   initialDelay: 500, // Start with 500ms delay
   maxDelay: 10000, // Cap at 10 seconds

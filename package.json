@@ -1,7 +1,7 @@
 {
   "name": "ai-router",
   "version": "0.1.0",
-  "description": "Minimal, type-safe model routing for Vercel AI SDK",
+  "description": "Minimal, type-safe model routing for ai-sdk",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,6 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest",
-    "test:ui": "vitest --ui",
     "lint": "eslint src tests --ext .ts",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit"
@@ -35,6 +34,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "peerDependencies": {
+    "ai": "^4.0.0"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",

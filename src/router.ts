@@ -1,16 +1,28 @@
-import type { AIRouter, RouterConfig, RouterRequest } from './types.js';
+import type { LanguageModelV1, LanguageModelV1CallOptions } from 'ai';
+import type { RouterConfig, RouterRequest } from './types.js';
 
 /**
- * Internal router implementation class.
+ * Internal router implementation that acts as a LanguageModel.
+ * Delegates all calls to the selected model based on the routing logic.
  */
-class Router<T extends string = string, TModel = unknown> implements AIRouter<T, TModel> {
-  private models: Record<T, TModel>;
+class RouterModel<T extends string = string> implements LanguageModelV1 {
+  readonly specificationVersion = 'v1' as const;
+  readonly provider: string;
+  readonly modelId: string;
+  readonly defaultObjectGenerationMode = 'json' as const;
+
+  private models: Record<T, LanguageModelV1>;
   private selectFn: (request: RouterRequest) => T;
 
-  constructor(config: RouterConfig<TModel, T>) {
+  constructor(config: RouterConfig<T>) {
     this.models = config.models;
     this.selectFn = config.select;
     this.validateConfig();
+
+    // Use first model's provider/id as defaults
+    const firstModel = Object.values(this.models)[0] as LanguageModelV1;
+    this.provider = firstModel.provider ?? 'ai-router';
+    this.modelId = `router(${Object.keys(this.models).join('|')})`;
   }
 
   private validateConfig(): void {
@@ -23,70 +35,90 @@ class Router<T extends string = string, TModel = unknown> implements AIRouter<T,
     }
   }
 
-  selectModel(request: Partial<RouterRequest>): TModel {
-    const normalizedRequest: RouterRequest = {
-      prompt: request.prompt ?? '',
-      messages: request.messages ?? [],
-      ...request,
-    };
+  private selectModel(options: LanguageModelV1CallOptions): LanguageModelV1 {
+    // Extract request information from the call options
+    const request: RouterRequest = {};
 
-    const selectedRoute = this.selectFn(normalizedRequest);
+    // Extract prompt text from the first message
+    if (options.prompt?.[0]?.content) {
+      const firstContent = options.prompt[0].content[0];
+      if (
+        firstContent &&
+        typeof firstContent !== 'string' &&
+        'type' in firstContent &&
+        firstContent.type === 'text'
+      ) {
+        request.prompt = firstContent.text;
+      }
+    }
+
+    // Extract messages
+    if (options.prompt) {
+      request.messages = options.prompt
+        .filter((msg) => msg.role !== 'system')
+        .map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+        }));
+    }
+
+    const selectedRoute = this.selectFn(request);
 
     if (!(selectedRoute in this.models)) {
       throw new Error(
-        `Selected route "${selectedRoute}" does not exist in models. Available routes: ${this.getRoutes().join(', ')}`
+        `Selected route "${selectedRoute}" does not exist in models. Available routes: ${Object.keys(this.models).join(', ')}`
       );
     }
 
     return this.models[selectedRoute];
   }
 
-  getModel(route: T): TModel | undefined {
-    return this.models[route];
+  async doGenerate(options: LanguageModelV1CallOptions) {
+    const model = this.selectModel(options);
+    return model.doGenerate(options);
   }
 
-  getRoutes(): T[] {
-    return Object.keys(this.models) as T[];
+  async doStream(options: LanguageModelV1CallOptions) {
+    const model = this.selectModel(options);
+    return model.doStream(options);
   }
 }
 
 /**
- * Create a new AI router
+ * Create a new AI router that acts as an AI SDK model
  *
- * @template TModel - The model type (automatically inferred from your models)
  * @template T - The models record type (automatically inferred)
  * @param config - Router configuration with models and select function
- * @returns AIRouter instance
+ * @returns A LanguageModelV1 that can be used directly with AI SDK functions
  *
  * @example
  * ```typescript
  * import { createRouter } from 'ai-router';
  * import { openai } from '@ai-sdk/openai';
  * import { anthropic } from '@ai-sdk/anthropic';
+ * import { generateText } from 'ai';
  *
- * const router = createRouter({
+ * const model = createRouter({
  *   models: {
  *     fast: openai('gpt-3.5-turbo'),
- *     smart: openai('gpt-4-turbo'),
  *     deep: anthropic('claude-3-5-sonnet-20241022'),
  *   },
  *   select: (request) => {
- *     if (request.prompt.length > 1000) return 'deep';
- *     if (request.messages.length > 10) return 'smart';
+ *     if (request.prompt && request.prompt.length > 1000) return 'deep';
  *     return 'fast';
  *   },
  * });
  *
- * // Use with AI SDK
- * import { generateText } from 'ai';
- *
- * const model = router.selectModel({ prompt: 'Hello!' });
- * const result = await generateText({ model, prompt: 'Hello!' });
+ * // Use directly with AI SDK
+ * const result = await generateText({
+ *   model,
+ *   prompt: 'Hello!'
+ * });
  * ```
  */
-export function createRouter<TModel, const T extends Record<string, TModel>>(config: {
+export function createRouter<const T extends Record<string, LanguageModelV1>>(config: {
   models: T;
   select: (request: RouterRequest) => keyof T;
-}): AIRouter<keyof T & string, T[keyof T]> {
-  return new Router(config as RouterConfig<T[keyof T], keyof T & string>);
+}): LanguageModelV1 {
+  return new RouterModel(config as RouterConfig<keyof T & string>);
 }

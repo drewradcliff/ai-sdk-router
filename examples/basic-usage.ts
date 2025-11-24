@@ -14,8 +14,8 @@ import { openai } from '@ai-sdk/openai';
 // @ts-expect-error - Example only, packages may not be installed
 import { anthropic } from '@ai-sdk/anthropic';
 
-// Create router with custom routing logic
-const router = createRouter({
+// Create router - it's a model that can be used directly with AI SDK
+const model = createRouter({
   models: {
     fast: openai('gpt-3.5-turbo'),
     smart: openai('gpt-4-turbo'),
@@ -23,24 +23,21 @@ const router = createRouter({
   },
   select: (request) => {
     // Route based on prompt length
-    if (request.prompt.length > 1000) return 'deep';
+    if (request.prompt && request.prompt.length > 1000) return 'deep';
 
     // Route based on message count
-    if (request.messages.length > 10) return 'smart';
+    if (request.messages && request.messages.length > 10) return 'smart';
 
     // Default to fast model
     return 'fast';
   },
 });
 
-// Example 1: Basic usage without retry
+// Example 1: Basic usage
 async function example1() {
-  const prompt = 'Explain quantum computing in simple terms';
-  const model = router.selectModel({ prompt });
-
   const result = await generateText({
     model,
-    prompt,
+    prompt: 'Explain quantum computing in simple terms',
   });
 
   console.log('Example 1 - Short prompt (uses fast model):');
@@ -49,10 +46,14 @@ async function example1() {
 
 // Example 2: Using retry for resilient AI generation
 async function example2() {
-  const prompt = 'Write a detailed essay about renewable energy';
-  const model = router.selectModel({ prompt });
-
-  const result = await retry(() => generateText({ model, prompt }), { maxRetries: 3 });
+  const result = await retry(
+    () =>
+      generateText({
+        model,
+        prompt: 'Write a detailed essay about renewable energy',
+      }),
+    { maxRetries: 3 }
+  );
 
   console.log('Example 2 - With retry:');
   console.log(result.text);
@@ -60,24 +61,28 @@ async function example2() {
 
 // Example 3: Advanced retry with custom options
 async function example3() {
-  const prompt = 'Explain machine learning algorithms';
-  const model = router.selectModel({ prompt });
-
-  const result = await retry(() => generateText({ model, prompt }), {
-    maxRetries: 5,
-    initialDelay: 500,
-    backoffMultiplier: 2,
-    shouldRetry: (error, attempt) => {
-      // Only retry on rate limit or timeout errors
-      if (error instanceof Error) {
-        return error.message.includes('rate limit') || error.message.includes('timeout');
-      }
-      return false;
-    },
-    onRetry: (error, attempt, delay) => {
-      console.log(`Retry attempt ${attempt} after ${delay}ms`);
-    },
-  });
+  const result = await retry(
+    () =>
+      generateText({
+        model,
+        prompt: 'Explain machine learning algorithms',
+      }),
+    {
+      maxRetries: 5,
+      initialDelay: 500,
+      backoffMultiplier: 2,
+      shouldRetry: (error, attempt) => {
+        // Only retry on rate limit or timeout errors
+        if (error instanceof Error) {
+          return error.message.includes('rate limit') || error.message.includes('timeout');
+        }
+        return false;
+      },
+      onRetry: (error, attempt, delay) => {
+        console.log(`Retry attempt ${attempt} after ${delay}ms`);
+      },
+    }
+  );
 
   console.log('Example 3 - Advanced retry:');
   console.log(result.text);

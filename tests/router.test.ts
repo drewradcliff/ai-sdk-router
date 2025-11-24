@@ -1,32 +1,58 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createRouter } from '../src/router.js';
-import type { LanguageModel } from 'ai';
+import type { LanguageModelV1, LanguageModelV1CallOptions } from 'ai';
 
-// Mock language models for testing
-const mockFastModel = { modelId: 'fast-model' } as LanguageModel;
-const mockSmartModel = { modelId: 'smart-model' } as LanguageModel;
-const mockDeepModel = { modelId: 'deep-model' } as LanguageModel;
+// Create mock LanguageModelV1 models for testing
+function createMockModel(id: string): LanguageModelV1 {
+  return {
+    specificationVersion: 'v1',
+    provider: 'mock',
+    modelId: id,
+    defaultObjectGenerationMode: 'json',
+    doGenerate: vi.fn(async () => ({
+      text: `Response from ${id}`,
+      finishReason: 'stop' as const,
+      usage: {
+        promptTokens: 10,
+        completionTokens: 20,
+      },
+      rawCall: {
+        rawPrompt: {},
+        rawSettings: {},
+      },
+    })),
+    doStream: vi.fn(async () => ({
+      stream: new ReadableStream(),
+      rawCall: {
+        rawPrompt: {},
+        rawSettings: {},
+      },
+    })),
+  } as LanguageModelV1;
+}
 
 describe('createRouter', () => {
-  it('should create a router with valid configuration', () => {
-    const router = createRouter({
+  it('should create a router that implements LanguageModelV1', () => {
+    const model = createRouter({
       models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
+        fast: createMockModel('fast'),
+        smart: createMockModel('smart'),
       },
       select: () => 'fast',
     });
 
-    expect(router).toBeDefined();
-    expect(router.selectModel).toBeDefined();
-    expect(router.getModel).toBeDefined();
-    expect(router.getRoutes).toBeDefined();
+    expect(model).toBeDefined();
+    expect(model.specificationVersion).toBe('v1');
+    expect(model.provider).toBeDefined();
+    expect(model.modelId).toBeDefined();
+    expect(model.doGenerate).toBeDefined();
+    expect(model.doStream).toBeDefined();
   });
 
   it('should throw error when models are empty', () => {
     expect(() =>
       createRouter({
-        models: {} as Record<string, LanguageModel>,
+        models: {} as Record<string, LanguageModelV1>,
         select: () => 'fast',
       })
     ).toThrow('Router configuration must include at least one model');
@@ -35,183 +61,170 @@ describe('createRouter', () => {
   it('should throw error when select function is missing', () => {
     expect(() =>
       createRouter({
-        models: { fast: mockFastModel },
+        models: { fast: createMockModel('fast') },
         select: undefined as any,
       })
     ).toThrow('Router configuration must include a select function');
   });
 });
 
-describe('AIRouter.selectModel', () => {
-  it('should select model based on prompt length', () => {
-    const router = createRouter({
+describe('Router model selection', () => {
+  it('should route to correct model based on prompt length', async () => {
+    const fastModel = createMockModel('fast');
+    const deepModel = createMockModel('deep');
+
+    const model = createRouter({
       models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
-        deep: mockDeepModel,
+        fast: fastModel,
+        deep: deepModel,
       },
       select: (request) => {
-        if (request.prompt.length > 1000) return 'deep';
-        if (request.prompt.length > 100) return 'smart';
+        if (request.prompt && request.prompt.length > 100) return 'deep';
         return 'fast';
       },
     });
 
-    const shortPrompt = { prompt: 'Hi' };
-    const mediumPrompt = { prompt: 'a'.repeat(150) };
-    const longPrompt = { prompt: 'a'.repeat(1500) };
-
-    expect(router.selectModel(shortPrompt)).toBe(mockFastModel);
-    expect(router.selectModel(mediumPrompt)).toBe(mockSmartModel);
-    expect(router.selectModel(longPrompt)).toBe(mockDeepModel);
-  });
-
-  it('should select model based on message count', () => {
-    const router = createRouter({
-      models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
-      },
-      select: (request) => {
-        if (request.messages.length > 10) return 'smart';
-        return 'fast';
-      },
-    });
-
-    const fewMessages = {
-      messages: [
-        { role: 'user', content: 'Hello' },
-        { role: 'assistant', content: 'Hi!' },
+    // Short prompt
+    const shortOptions: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hi' }],
+        },
       ],
     };
 
-    const manyMessages = {
-      messages: Array.from({ length: 15 }, (_, i) => ({
-        role: i % 2 === 0 ? 'user' : 'assistant',
-        content: `Message ${i}`,
-      })),
+    await model.doGenerate(shortOptions);
+    expect(fastModel.doGenerate).toHaveBeenCalledWith(shortOptions);
+    expect(deepModel.doGenerate).not.toHaveBeenCalled();
+
+    // Reset mocks
+    vi.clearAllMocks();
+
+    // Long prompt
+    const longOptions: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'a'.repeat(150) }],
+        },
+      ],
     };
 
-    expect(router.selectModel(fewMessages)).toBe(mockFastModel);
-    expect(router.selectModel(manyMessages)).toBe(mockSmartModel);
+    await model.doGenerate(longOptions);
+    expect(deepModel.doGenerate).toHaveBeenCalledWith(longOptions);
+    expect(fastModel.doGenerate).not.toHaveBeenCalled();
   });
 
-  it('should handle empty request object', () => {
-    const router = createRouter({
-      models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
-      },
-      select: () => 'fast',
-    });
+  it('should route to correct model based on message count', async () => {
+    const fastModel = createMockModel('fast');
+    const smartModel = createMockModel('smart');
 
-    expect(router.selectModel({})).toBe(mockFastModel);
-  });
-
-  it('should handle custom request properties', () => {
-    const router = createRouter({
+    const model = createRouter({
       models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
+        fast: fastModel,
+        smart: smartModel,
       },
       select: (request) => {
-        if (request.complexity === 'high') return 'smart';
+        if (request.messages && request.messages.length > 3) return 'smart';
         return 'fast';
       },
     });
 
-    expect(router.selectModel({ complexity: 'low' })).toBe(mockFastModel);
-    expect(router.selectModel({ complexity: 'high' })).toBe(mockSmartModel);
+    // Few messages
+    const fewOptions: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Hi!' }] },
+      ],
+    };
+
+    await model.doGenerate(fewOptions);
+    expect(fastModel.doGenerate).toHaveBeenCalledWith(fewOptions);
+    expect(smartModel.doGenerate).not.toHaveBeenCalled();
+
+    // Reset mocks
+    vi.clearAllMocks();
+
+    // Many messages
+    const manyOptions: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: Array.from({ length: 10 }, (_, i) => ({
+        role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: [{ type: 'text' as const, text: `Message ${i}` }],
+      })),
+    };
+
+    await model.doGenerate(manyOptions);
+    expect(smartModel.doGenerate).toHaveBeenCalledWith(manyOptions);
+    expect(fastModel.doGenerate).not.toHaveBeenCalled();
   });
 
-  it('should throw error when select returns invalid route', () => {
-    const router = createRouter({
+  it('should handle streaming', async () => {
+    const fastModel = createMockModel('fast');
+    const model = createRouter({
+      models: { fast: fastModel },
+      select: () => 'fast',
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+        },
+      ],
+    };
+
+    await model.doStream(options);
+    expect(fastModel.doStream).toHaveBeenCalledWith(options);
+  });
+
+  it('should throw error when select returns invalid route', async () => {
+    const model = createRouter({
       models: {
-        fast: mockFastModel,
+        fast: createMockModel('fast'),
       },
       select: () => 'nonexistent' as any,
     });
 
-    expect(() => router.selectModel({})).toThrow(
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Hello' }],
+        },
+      ],
+    };
+
+    await expect(model.doGenerate(options)).rejects.toThrow(
       'Selected route "nonexistent" does not exist in models'
     );
   });
 });
 
-describe('AIRouter.getModel', () => {
-  it('should return model for valid route', () => {
-    const router = createRouter({
-      models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
-      },
-      select: () => 'fast',
-    });
-
-    expect(router.getModel('fast')).toBe(mockFastModel);
-    expect(router.getModel('smart')).toBe(mockSmartModel);
-  });
-
-  it('should return undefined for invalid route', () => {
-    const router = createRouter({
-      models: {
-        fast: mockFastModel,
-      },
-      select: () => 'fast',
-    });
-
-    expect(router.getModel('nonexistent' as any)).toBeUndefined();
-  });
-});
-
-describe('AIRouter.getRoutes', () => {
-  it('should return all route names', () => {
-    const router = createRouter({
-      models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
-        deep: mockDeepModel,
-      },
-      select: () => 'fast',
-    });
-
-    const routes = router.getRoutes();
-    expect(routes).toHaveLength(3);
-    expect(routes).toContain('fast');
-    expect(routes).toContain('smart');
-    expect(routes).toContain('deep');
-  });
-
-  it('should return routes in correct order', () => {
-    const router = createRouter({
-      models: {
-        a: mockFastModel,
-        b: mockSmartModel,
-        c: mockDeepModel,
-      },
-      select: () => 'a',
-    });
-
-    const routes = router.getRoutes();
-    expect(routes).toEqual(['a', 'b', 'c']);
-  });
-});
-
 describe('Type safety', () => {
   it('should infer route types from models object', () => {
-    const router = createRouter({
+    const model = createRouter({
       models: {
-        fast: mockFastModel,
-        smart: mockSmartModel,
+        fast: createMockModel('fast'),
+        smart: createMockModel('smart'),
       },
+      // This should only accept 'fast' | 'smart' at compile time
       select: () => 'fast',
     });
 
-    // These should work at compile time
-    const model1 = router.getModel('fast');
-    const model2 = router.getModel('smart');
-
-    expect(model1).toBeDefined();
-    expect(model2).toBeDefined();
+    expect(model).toBeDefined();
   });
 });
