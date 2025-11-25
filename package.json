@@ -32,7 +32,7 @@
     "model-routing",
     "typescript"
   ],
-  "author": "",
+  "author": "Drew Radcliff",
   "license": "MIT",
   "peerDependencies": {
     "ai": "^4.0.0"
