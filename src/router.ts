@@ -75,19 +75,8 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
     return { model: this.models[selectedRoute], route: selectedRoute };
   }
 
-  private getRetryConfig(route: T): RetryConfig | undefined {
-    if (!this.retryConfig) {
-      return undefined;
-    }
-
-    // Check if it's a per-model config
-    if ('default' in this.retryConfig || route in this.retryConfig) {
-      const perModelConfig = this.retryConfig as Record<T | 'default', RetryConfig>;
-      return perModelConfig[route] ?? perModelConfig.default;
-    }
-
-    // Otherwise it's a global config
-    return this.retryConfig as RetryConfig;
+  private getRetryConfig(): RetryConfig | undefined {
+    return this.retryConfig;
   }
 
   private async withRetry<TResult>(
@@ -145,14 +134,14 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
   }
 
   doGenerate(options: LanguageModelV1CallOptions) {
-    const { model, route } = this.selectModel(options);
-    const retryConfig = this.getRetryConfig(route);
+    const { model } = this.selectModel(options);
+    const retryConfig = this.getRetryConfig();
     return this.withRetry(() => model.doGenerate(options), retryConfig);
   }
 
   doStream(options: LanguageModelV1CallOptions) {
-    const { model, route } = this.selectModel(options);
-    const retryConfig = this.getRetryConfig(route);
+    const { model } = this.selectModel(options);
+    const retryConfig = this.getRetryConfig();
     return this.withRetry(() => model.doStream(options), retryConfig);
   }
 }
@@ -192,7 +181,7 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
 export function createRouter<const T extends Record<string, LanguageModelV1>>(config: {
   models: T;
   select: (request: RouterRequest) => keyof T;
-  retry?: RetryConfig | (Record<keyof T | 'default', RetryConfig> & { default?: RetryConfig });
+  retry?: RetryConfig;
 }): LanguageModelV1 {
   return new RouterModel(config as RouterConfig<keyof T & string>);
 }

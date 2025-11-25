@@ -42,10 +42,6 @@ export type RouterConfig<T extends string = string> = {
   models: Record<T, LanguageModelV1>;
   /** Selection function that determines which route to use based on the request */
   select: (request: RouterRequest) => T;
-  /**
-   * Retry configuration - can be global or per-model
-   * - Pass RetryConfig for global retry behavior
-   * - Pass Record<T, RetryConfig> with 'default' key for per-model retry
-   */
-  retry?: RetryConfig | (Record<T | 'default', RetryConfig> & { default?: RetryConfig });
+  /** Optional retry configuration applied globally to all models */
+  retry?: RetryConfig;
 };
