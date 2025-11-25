@@ -1,7 +1,7 @@
 /**
- * ai-router: model routing for ai-sdk
+ * ai-sdk-router: model routing for ai-sdk
  *
- * @module ai-router
+ * @module ai-sdk-router
  */
 
 export { createRouter } from './router.js';

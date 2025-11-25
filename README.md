@@ -1,11 +1,11 @@
-# AI Router
+# AI SDK Router
 
 Model routing for [AI SDK](https://ai-sdk.dev/). Route requests to different models based on prompt length, complexity, or any custom logic
 
 ## Installation
 
 ```bash
-npm install ai-router
+npm install ai-sdk-router
 ```
 
 Install ai-sdk and providers if you haven't already
@@ -17,7 +17,7 @@ npm install ai @ai-sdk/openai @ai-sdk/anthropic
 ## Usage
 
 ```ts
-import { createRouter } from 'ai-router';
+import { createRouter } from 'ai-sdk-router';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { generateText } from 'ai';

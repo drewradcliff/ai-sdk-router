@@ -1,4 +1,4 @@
-# AI Router Next.js Examples
+# AI SDK Router Next.js Examples
 
 ## Getting Started
 

@@ -62,7 +62,7 @@ export default function Home() {
         {/* Header */}
         <div className="mb-8 text-center">
           <h1 className="text-4xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 mb-3">
-            AI Router Examples
+            AI SDK Router Examples
           </h1>
           <p className="text-lg text-zinc-600 dark:text-zinc-400">
             Intelligent model routing with OpenAI and Anthropic
@@ -229,12 +229,12 @@ export default function Home() {
           <p className="text-sm text-zinc-500 dark:text-zinc-500">
             Powered by{' '}
             <a
-              href="https://github.com/drewradcliff/ai-router"
+              href="https://github.com/drewradcliff/ai-sdk-router"
               className="font-medium text-zinc-900 dark:text-zinc-100 hover:underline"
               target="_blank"
               rel="noopener noreferrer"
             >
-              ai-router
+              ai-sdk-router
             </a>
             {' • '}
             <a

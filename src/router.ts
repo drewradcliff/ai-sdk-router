@@ -23,7 +23,7 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
 
     // Use first model's provider/id as defaults
     const firstModel = Object.values(this.models)[0] as LanguageModelV1;
-    this.provider = firstModel.provider ?? 'ai-router';
+    this.provider = firstModel.provider ?? 'ai-sdk-router';
     this.modelId = `router(${Object.keys(this.models).join('|')})`;
   }
 
@@ -147,7 +147,7 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
 }
 
 /**
- * Create a new AI router that acts as an AI SDK model
+ * Create a new AI SDK Router that acts as an AI SDK model
  *
  * @template T - The models record type (automatically inferred)
  * @param config - Router configuration with models and select function
@@ -155,7 +155,7 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
  *
  * @example
  * ```typescript
- * import { createRouter } from 'ai-router';
+ * import { createRouter } from 'ai-sdk-router';
  * import { openai } from '@ai-sdk/openai';
  * import { anthropic } from '@ai-sdk/anthropic';
  * import { generateText } from 'ai';
