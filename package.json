@@ -1,7 +1,12 @@
 {
   "name": "ai-sdk-router",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Minimal, type-safe model routing for ai-sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drewradcliff/ai-sdk-router.git"
+  },
+  "homepage": "https://github.com/drewradcliff/ai-sdk-router#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
