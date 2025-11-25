@@ -4,23 +4,12 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { generateText } from 'ai';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Create a router with named routes and per-tier fallbacks
-const model = createRouter({
-  models: {
-    // Fast tier: tries gpt-4o-mini first, falls back to gpt-4o if it fails
-    fast: [openai('gpt-4o-mini'), openai('gpt-4o')],
-    // Deep tier: Claude for complex prompts
-    deep: anthropic('claude-4-sonnet-20250514'),
-  },
-  select: (request: { prompt?: string }) => {
-    // Route longer prompts to Claude (deep thinking)
-    if (request.prompt && request.prompt.length > 100) {
-      return 'deep';
-    }
-    // Route shorter prompts to fast tier
-    return 'fast';
-  },
-});
+// Simplest form: array of models as fallback chain
+// Tries gpt-4o first, falls back to Claude if it fails
+const model = createRouter([
+  openai('gpt-4o'),
+  anthropic('claude-4-sonnet-20250514'),
+]);
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,18 +22,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Generate text using the router - it will automatically select the right model
+    // Generate text using the router - automatically falls back if primary fails
     const result = await generateText({
       model,
       prompt,
     });
 
-    // Determine which model was used based on prompt length
-    const selectedModel = prompt.length > 100 ? 'Claude 4 Sonnet' : 'GPT-4o Mini (with fallback)';
-
     return NextResponse.json({
       text: result.text,
-      model: selectedModel,
       promptLength: prompt.length,
     });
   } catch (error) {
@@ -55,3 +40,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

@@ -5,4 +5,10 @@
  */
 
 export { createRouter } from './router.js';
-export type { RouterConfig, RouterRequest, RetryConfig } from './types.js';
+export type {
+  RouterConfig,
+  RouterRequest,
+  RetryConfig,
+  ArrayRouterConfig,
+  ModelOrChain,
+} from './types.js';

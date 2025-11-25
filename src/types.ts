@@ -31,17 +31,34 @@ export type RetryConfig = {
   onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
   /** Callback invoked when all retries are exhausted */
   onMaxRetriesExceeded?: (error: unknown, attempts: number) => void;
+  /** Callback invoked when falling back to the next model in a chain */
+  onFallback?: (error: unknown, fromModel: LanguageModelV1, toModel: LanguageModelV1) => void;
 };
 
 /**
- * Configuration object for creating a router.
+ * A single model or an array of models (fallback chain)
+ */
+export type ModelOrChain = LanguageModelV1 | LanguageModelV1[];
+
+/**
+ * Configuration object for creating a router with named routes.
  * @template T - Union of route name strings
  */
 export type RouterConfig<T extends string = string> = {
-  /** Map of route names to their corresponding AI SDK models */
-  models: Record<T, LanguageModelV1>;
+  /** Map of route names to their corresponding AI SDK models or fallback chains */
+  models: Record<T, ModelOrChain>;
   /** Selection function that determines which route to use based on the request */
   select: (request: RouterRequest) => T;
-  /** Optional retry configuration applied globally to all models */
-  retry?: RetryConfig;
+  /** Optional retry configuration applied globally to all models, or false to disable */
+  retry?: RetryConfig | false;
+};
+
+/**
+ * Configuration object for creating a router with a simple array of models (fallback chain).
+ */
+export type ArrayRouterConfig = {
+  /** Array of models forming a fallback chain */
+  models: LanguageModelV1[];
+  /** Optional retry configuration, or false to disable */
+  retry?: RetryConfig | false;
 };

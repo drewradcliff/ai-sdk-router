@@ -1,14 +1,14 @@
 import { createRouter } from 'ai-sdk-router';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
-import { generateText } from 'ai';
+import { generateText, type LanguageModelV1 } from 'ai';
 import { NextRequest, NextResponse } from 'next/server';
 
-// Create a router with retry logic for resilience
+// Create a router with fallback chain and custom retry logic
 const model = createRouter({
   models: {
-    fast: openai('gpt-4o-mini'),
-    deep: anthropic('claude-4-sonnet-20250514'),
+    fast: [openai('gpt-4o-mini'), openai('gpt-4o')],
+    deep: [anthropic('claude-4-sonnet-20250514'), openai('gpt-4o')],
   },
   select: (request: { prompt?: string }) => {
     // Route longer prompts to Claude (deep thinking)
@@ -40,6 +40,10 @@ const model = createRouter({
       console.log(`🔄 Retry attempt ${attempt} after ${delay}ms delay`);
       console.log(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     },
+    onFallback: (error: unknown, fromModel: LanguageModelV1, toModel: LanguageModelV1) => {
+      console.log(`⚡ Falling back from ${fromModel.modelId} to ${toModel.modelId}`);
+      console.log(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    },
     onMaxRetriesExceeded: (error: unknown, attempts: number) => {
       console.error(`❌ Failed after ${attempts} retry attempts`);
     },
@@ -62,14 +66,15 @@ export async function POST(req: NextRequest) {
 
     logs.push(`📝 Starting request with ${prompt.length} character prompt`);
 
-    // Generate text using the router with automatic retry
+    // Generate text using the router with automatic retry and fallback
     const result = await generateText({
       model,
       prompt,
     });
 
     const duration = Date.now() - startTime;
-    const selectedModel = prompt.length > 100 ? 'Claude 4 Sonnet' : 'GPT-4o Mini';
+    const selectedModel =
+      prompt.length > 100 ? 'Claude 4 Sonnet (with fallback)' : 'GPT-4o Mini (with fallback)';
 
     logs.push(`✅ Successfully generated response in ${duration}ms`);
 

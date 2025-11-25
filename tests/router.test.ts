@@ -33,6 +33,61 @@ function createMockModel(id: string): LanguageModelV1 {
   } as LanguageModelV1;
 }
 
+// Helper to create failing mock model
+function createFailingMockModel(
+  id: string,
+  failCount: number
+): LanguageModelV1 & { callCount: number } {
+  let callCount = 0;
+  return {
+    specificationVersion: 'v1',
+    provider: 'mock',
+    modelId: id,
+    defaultObjectGenerationMode: 'json',
+    get callCount() {
+      return callCount;
+    },
+    doGenerate: vi.fn(async () => {
+      callCount++;
+      if (callCount <= failCount) {
+        throw new Error(`${id} rate limit exceeded`);
+      }
+      return {
+        text: `Response from ${id}`,
+        finishReason: 'stop' as const,
+        usage: { promptTokens: 10, completionTokens: 20 },
+        rawCall: { rawPrompt: {}, rawSettings: {} },
+      };
+    }),
+    doStream: vi.fn(async () => {
+      callCount++;
+      if (callCount <= failCount) {
+        throw new Error(`${id} rate limit exceeded`);
+      }
+      return {
+        stream: new ReadableStream(),
+        rawCall: { rawPrompt: {}, rawSettings: {} },
+      };
+    }),
+  } as LanguageModelV1 & { callCount: number };
+}
+
+// Helper to create always-failing mock model
+function createAlwaysFailingMockModel(id: string, errorMessage: string = 'error'): LanguageModelV1 {
+  return {
+    specificationVersion: 'v1',
+    provider: 'mock',
+    modelId: id,
+    defaultObjectGenerationMode: 'json',
+    doGenerate: vi.fn(async () => {
+      throw new Error(`${id} ${errorMessage}`);
+    }),
+    doStream: vi.fn(async () => {
+      throw new Error(`${id} ${errorMessage}`);
+    }),
+  } as LanguageModelV1;
+}
+
 describe('createRouter', () => {
   it('should create a router that implements LanguageModelV1', () => {
     const model = createRouter({
@@ -573,7 +628,7 @@ describe('Router retry functionality', () => {
       modelId: 'test',
       defaultObjectGenerationMode: 'json',
       doGenerate: vi.fn(async () => {
-        throw new Error('persistent error');
+        throw new Error('rate limit exceeded');
       }),
       doStream: vi.fn(),
     } as LanguageModelV1;
@@ -594,7 +649,7 @@ describe('Router retry functionality', () => {
       prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
     };
 
-    await expect(router.doGenerate(options)).rejects.toThrow('persistent error');
+    await expect(router.doGenerate(options)).rejects.toThrow('rate limit exceeded');
 
     // Should be called once when retries are exhausted
     expect(onMaxRetriesSpy).toHaveBeenCalledTimes(1);
@@ -637,7 +692,7 @@ describe('Router retry functionality', () => {
         callCount++;
         callTimes.push(Date.now());
         if (callCount < 4) {
-          throw new Error('retry');
+          throw new Error('rate limit exceeded');
         }
         return {
           text: 'Success',
@@ -687,7 +742,7 @@ describe('Router retry functionality', () => {
         callCount++;
         callTimes.push(Date.now());
         if (callCount < 4) {
-          throw new Error('retry');
+          throw new Error('rate limit exceeded');
         }
         return {
           text: 'Success',
@@ -721,5 +776,400 @@ describe('Router retry functionality', () => {
     // Second retry would be 200ms but should be capped at 150ms
     expect(callTimes[2] - callTimes[1]).toBeLessThan(200);
     expect(callTimes[2] - callTimes[1]).toBeGreaterThanOrEqual(145);
+  });
+});
+
+describe('Form 1: Array only - simple fallback chain', () => {
+  it('should create a router from an array of models', () => {
+    const model1 = createMockModel('model1');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter([model1, model2]);
+
+    expect(router).toBeDefined();
+    expect(router.specificationVersion).toBe('v1');
+    expect(router.doGenerate).toBeDefined();
+    expect(router.doStream).toBeDefined();
+  });
+
+  it('should use first model in array when it succeeds', async () => {
+    const model1 = createMockModel('model1');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter([model1, model2]);
+
+    const result = await generateText({
+      model: router,
+      prompt: 'Hello',
+    });
+
+    expect(result.text).toBe('Response from model1');
+    expect(model1.doGenerate).toHaveBeenCalled();
+    expect(model2.doGenerate).not.toHaveBeenCalled();
+  });
+
+  it('should fallback to second model when first fails', async () => {
+    const model1 = createAlwaysFailingMockModel('model1', 'rate limit exceeded');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: { maxRetries: 1, initialDelay: 10 },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    expect(result.text).toBe('Response from model2');
+    expect(model1.doGenerate).toHaveBeenCalled();
+    expect(model2.doGenerate).toHaveBeenCalled();
+  });
+
+  it('should apply default retry config', async () => {
+    const model1 = createFailingMockModel('model1', 2); // Fails twice, then succeeds
+    const model2 = createMockModel('model2');
+
+    const router = createRouter([model1, model2]);
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    // Should retry model1 and succeed without falling back
+    expect(result.text).toBe('Response from model1');
+    expect(model1.doGenerate).toHaveBeenCalledTimes(3);
+    expect(model2.doGenerate).not.toHaveBeenCalled();
+  });
+});
+
+describe('Array + config - fallback with custom retry', () => {
+  it('should create a router with models array and custom retry', () => {
+    const model1 = createMockModel('model1');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: { maxRetries: 5, initialDelay: 50 },
+    });
+
+    expect(router).toBeDefined();
+    expect(router.specificationVersion).toBe('v1');
+  });
+
+  it('should respect custom retry config', async () => {
+    const model1 = createFailingMockModel('model1', 4); // Fails 4 times
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: { maxRetries: 5, initialDelay: 10 },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    // With 5 retries, model1 should succeed on 5th attempt
+    expect(result.text).toBe('Response from model1');
+    expect(model1.doGenerate).toHaveBeenCalledTimes(5);
+  });
+
+  it('should disable retry when retry is false', async () => {
+    const model1 = createAlwaysFailingMockModel('model1', 'rate limit exceeded');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: false,
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    // Without retry, should immediately fall back to model2
+    expect(result.text).toBe('Response from model2');
+    expect(model1.doGenerate).toHaveBeenCalledTimes(1);
+    expect(model2.doGenerate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Object with arrays - routing + per-tier fallbacks', () => {
+  it('should create a router with named routes containing fallback chains', () => {
+    const fastModel1 = createMockModel('fast1');
+    const fastModel2 = createMockModel('fast2');
+    const deepModel = createMockModel('deep');
+
+    const router = createRouter({
+      models: {
+        fast: [fastModel1, fastModel2],
+        deep: [deepModel],
+      },
+      select: () => 'fast',
+    });
+
+    expect(router).toBeDefined();
+    expect(router.modelId).toContain('fast');
+    expect(router.modelId).toContain('deep');
+  });
+
+  it('should route to correct tier and use fallback within tier', async () => {
+    const fastModel1 = createAlwaysFailingMockModel('fast1', 'rate limit exceeded');
+    const fastModel2 = createMockModel('fast2');
+    const deepModel = createMockModel('deep');
+
+    const router = createRouter({
+      models: {
+        fast: [fastModel1, fastModel2],
+        deep: [deepModel],
+      },
+      select: (request) => {
+        if (request.prompt && request.prompt.length > 100) return 'deep';
+        return 'fast';
+      },
+      retry: { maxRetries: 1, initialDelay: 10 },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    // Should use fast tier and fall back to fast2
+    expect(result.text).toBe('Response from fast2');
+    expect(fastModel1.doGenerate).toHaveBeenCalled();
+    expect(fastModel2.doGenerate).toHaveBeenCalled();
+    expect(deepModel.doGenerate).not.toHaveBeenCalled();
+  });
+
+  it('should support single models (backwards compatibility)', async () => {
+    const fastModel = createMockModel('fast');
+    const deepModel = createMockModel('deep');
+
+    const router = createRouter({
+      models: {
+        fast: fastModel,
+        deep: deepModel,
+      },
+      select: () => 'fast',
+    });
+
+    const result = await generateText({
+      model: router,
+      prompt: 'Hello',
+    });
+
+    expect(result.text).toBe('Response from fast');
+    expect(fastModel.doGenerate).toHaveBeenCalled();
+  });
+
+  it('should support mixed single models and arrays', async () => {
+    const fastModel = createMockModel('fast');
+    const deepModel1 = createAlwaysFailingMockModel('deep1', 'rate limit exceeded');
+    const deepModel2 = createMockModel('deep2');
+
+    const router = createRouter({
+      models: {
+        fast: fastModel,
+        deep: [deepModel1, deepModel2],
+      },
+      select: (request) => {
+        if (request.prompt && request.prompt.length > 10) return 'deep';
+        return 'fast';
+      },
+      retry: { maxRetries: 1, initialDelay: 10 },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'This is a longer prompt that needs deep thinking' }],
+        },
+      ],
+    };
+
+    const result = await router.doGenerate(options);
+
+    expect(result.text).toBe('Response from deep2');
+    expect(fastModel.doGenerate).not.toHaveBeenCalled();
+    expect(deepModel1.doGenerate).toHaveBeenCalled();
+    expect(deepModel2.doGenerate).toHaveBeenCalled();
+  });
+});
+
+describe('Fallback chain behavior', () => {
+  it('should retry each model before falling back to next', async () => {
+    const model1: LanguageModelV1 = {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: 'model1',
+      defaultObjectGenerationMode: 'json',
+      doGenerate: vi.fn(async () => {
+        throw new Error('model1 rate limit exceeded');
+      }),
+      doStream: vi.fn(),
+    } as LanguageModelV1;
+
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: { maxRetries: 2, initialDelay: 10 },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    // model1 should be called 3 times (1 initial + 2 retries)
+    expect(model1.doGenerate).toHaveBeenCalledTimes(3);
+    // Then fall back to model2
+    expect(model2.doGenerate).toHaveBeenCalledTimes(1);
+    expect(result.text).toBe('Response from model2');
+  });
+
+  it('should call onFallback callback when falling back', async () => {
+    const onFallbackSpy = vi.fn();
+    const model1 = createAlwaysFailingMockModel('model1', 'rate limit exceeded');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: {
+        maxRetries: 1,
+        initialDelay: 10,
+        onFallback: onFallbackSpy,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await router.doGenerate(options);
+
+    expect(onFallbackSpy).toHaveBeenCalledTimes(1);
+    expect(onFallbackSpy).toHaveBeenCalledWith(expect.any(Error), model1, model2);
+  });
+
+  it('should throw error when all models in chain fail', async () => {
+    const model1 = createAlwaysFailingMockModel('model1', 'rate limit exceeded');
+    const model2 = createAlwaysFailingMockModel('model2', 'rate limit exceeded');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: { maxRetries: 1, initialDelay: 10 },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await expect(router.doGenerate(options)).rejects.toThrow('model2 rate limit exceeded');
+  });
+
+  it('should work with doStream fallback', async () => {
+    const model1 = createAlwaysFailingMockModel('model1', 'rate limit exceeded');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: { maxRetries: 1, initialDelay: 10 },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doStream(options);
+
+    expect(result).toBeDefined();
+    expect(model1.doStream).toHaveBeenCalled();
+    expect(model2.doStream).toHaveBeenCalled();
+  });
+
+  it('should not call onMaxRetriesExceeded when falling back to next model', async () => {
+    const onMaxRetriesSpy = vi.fn();
+    const model1 = createAlwaysFailingMockModel('model1', 'rate limit exceeded');
+    const model2 = createMockModel('model2');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: {
+        maxRetries: 1,
+        initialDelay: 10,
+        onMaxRetriesExceeded: onMaxRetriesSpy,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await router.doGenerate(options);
+
+    // onMaxRetriesExceeded should NOT be called since we successfully fell back
+    expect(onMaxRetriesSpy).not.toHaveBeenCalled();
+  });
+
+  it('should call onMaxRetriesExceeded only when last model fails', async () => {
+    const onMaxRetriesSpy = vi.fn();
+    const model1 = createAlwaysFailingMockModel('model1', 'rate limit exceeded');
+    const model2 = createAlwaysFailingMockModel('model2', 'rate limit exceeded');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: {
+        maxRetries: 1,
+        initialDelay: 10,
+        onMaxRetriesExceeded: onMaxRetriesSpy,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await expect(router.doGenerate(options)).rejects.toThrow();
+
+    // onMaxRetriesExceeded should be called once for the last model
+    expect(onMaxRetriesSpy).toHaveBeenCalledTimes(1);
   });
 });

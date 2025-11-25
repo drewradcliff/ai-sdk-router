@@ -8,10 +8,10 @@
     "start": "next start"
   },
   "dependencies": {
-    "ai": "^4.0.38",
-    "@ai-sdk/openai": "^1.0.8",
     "@ai-sdk/anthropic": "^1.0.8",
-    "ai-sdk-router": "file:../../",
+    "@ai-sdk/openai": "^1.0.8",
+    "ai": "^4.0.38",
+    "ai-sdk-router": "link:../..",
     "next": "16.0.4",
     "react": "19.2.0",
     "react-dom": "19.2.0"

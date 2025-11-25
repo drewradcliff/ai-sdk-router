@@ -1,6 +1,6 @@
 # AI SDK Router
 
-Model routing for [AI SDK](https://ai-sdk.dev/). Route requests to different models based on prompt length, complexity, or any custom logic
+Model routing for [AI SDK](https://ai-sdk.dev/).
 
 ## Installation
 
@@ -16,19 +16,45 @@ npm install ai @ai-sdk/openai @ai-sdk/anthropic
 
 ## Usage
 
+### Simple fallback chain (array form)
+
 ```ts
 import { createRouter } from 'ai-sdk-router';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { generateText } from 'ai';
 
+// Tries gpt-4 first, falls back to claude if it fails
+const model = createRouter([openai('gpt-4'), anthropic('claude-3-5-sonnet-20241022')]);
+
+const result = await generateText({
+  model,
+  prompt: 'Explain quantum computing',
+});
+```
+
+### Fallback chain with custom retry
+
+```ts
+const model = createRouter({
+  models: [openai('gpt-4'), anthropic('claude-3-5-sonnet-20241022')],
+  retry: {
+    maxRetries: 5,
+    initialDelay: 500,
+  },
+});
+```
+
+### Routing with with tiers
+
+```ts
 const model = createRouter({
   models: {
     fast: openai('gpt-3.5-turbo'),
     deep: anthropic('claude-3-5-sonnet-20241022'),
   },
   select: (request) => {
-    if (request.prompt.length > 1000) {
+    if (request.prompt && request.prompt.length > 1000) {
       return 'deep';
     }
     return 'fast';
@@ -39,39 +65,4 @@ const result = await generateText({
   model,
   prompt: 'Explain quantum computing',
 });
-```
-
-## Retry
-
-Configure retry in the router:
-
-```ts
-const model = createRouter({
-  models: {
-    fast: openai('gpt-3.5-turbo'),
-    deep: anthropic('claude-3-5-sonnet-20241022'),
-  },
-  select: (request) => {
-    if (request.prompt.length > 1000) return 'deep';
-    return 'fast';
-  },
-  retry: {
-    maxRetries: 3,
-    initialDelay: 1000,
-    maxDelay: 10000,
-    backoffMultiplier: 2,
-    shouldRetry: (error) => {
-      // Only retry rate limit and timeout errors
-      if (error instanceof Error) {
-        return error.message.includes('rate limit') || error.message.includes('timeout');
-      }
-      return false;
-    },
-    onRetry: (error, attempt, delay) => {
-      console.log(`Retry ${attempt} after ${delay}ms`);
-    },
-  },
-});
-
-const result = await generateText({ model, prompt: '...' });
 ```
