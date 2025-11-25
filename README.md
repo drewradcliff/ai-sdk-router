@@ -1,25 +1,20 @@
-# ai-router
+# AI Router
 
-Intelligent model routing for ai-sdk.
-
-## Features
-
-- Route requests to different models based on prompt length, complexity, or any custom logic
-- Thin wrapper around AI SDK
+Model routing for [AI SDK](https://ai-sdk.dev/). Route requests to different models based on prompt length, complexity, or any custom logic
 
 ## Installation
 
 ```bash
-pnpm add ai-router ai
+npm install ai-router
 ```
 
-You'll also need model providers:
+Install ai-sdk and providers if you haven't already
 
 ```bash
-pnpm add @ai-sdk/openai @ai-sdk/anthropic
+npm install ai @ai-sdk/openai @ai-sdk/anthropic
 ```
 
-## Quick Start
+## Usage
 
 ```ts
 import { createRouter } from 'ai-router';
@@ -46,9 +41,9 @@ const result = await generateText({
 });
 ```
 
-## Retry with Exponential Backoff
+## Retry
 
-Configure retry once at the router level - it automatically applies to all requests:
+Configure retry in the router:
 
 ```ts
 const model = createRouter({
@@ -79,31 +74,4 @@ const model = createRouter({
 });
 
 const result = await generateText({ model, prompt: '...' });
-```
-
-### Per-Model Retry Configuration
-
-Different retry policies for different models:
-
-```ts
-const model = createRouter({
-  models: {
-    fast: openai('gpt-3.5-turbo'),
-    deep: anthropic('claude-3-5-sonnet-20241022'),
-  },
-  select: (request) => (request.prompt.length > 1000 ? 'deep' : 'fast'),
-  retry: {
-    fast: {
-      maxRetries: 2,
-      initialDelay: 500,
-    },
-    deep: {
-      maxRetries: 5,
-      initialDelay: 2000,
-    },
-    default: {
-      maxRetries: 3,
-    },
-  },
-});
 ```
