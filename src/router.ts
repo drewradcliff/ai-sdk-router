@@ -8,19 +8,44 @@ import type {
 } from './types.js';
 
 /**
+ * Error thrown when response validation fails.
+ * Allows retry/fallback logic to handle 200 OK responses with error bodies.
+ */
+export class ResponseValidationError extends Error {
+  readonly response: unknown;
+
+  constructor(response: unknown, message?: string) {
+    super(message ?? 'Response validation failed');
+    this.name = 'ResponseValidationError';
+    this.response = response;
+  }
+}
+
+/**
  * Default retry configuration applied when no config is specified
  */
 const DEFAULT_RETRY_CONFIG: Required<
-  Omit<RetryConfig, 'onRetry' | 'onMaxRetriesExceeded' | 'onFallback'>
+  Omit<
+    RetryConfig,
+    'onRetry' | 'onMaxRetriesExceeded' | 'onFallback' | 'onInvalidResponse' | 'validateResponse'
+  >
 > = {
   maxRetries: 3,
   initialDelay: 1000,
   maxDelay: 10000,
   backoffMultiplier: 2,
   shouldRetry: (error: unknown) => {
+    // Always retry ResponseValidationError (from validateResponse returning false)
+    if (error instanceof ResponseValidationError) {
+      return true;
+    }
     if (error instanceof Error) {
       const message = error.message.toLowerCase();
-      return message.includes('rate limit') || message.includes('timeout');
+      return (
+        message.includes('rate limit') ||
+        message.includes('timeout') ||
+        message.includes('overloaded')
+      );
     }
     return false;
   },
@@ -178,8 +203,10 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
       maxDelay = DEFAULT_RETRY_CONFIG.maxDelay,
       backoffMultiplier = DEFAULT_RETRY_CONFIG.backoffMultiplier,
       shouldRetry = DEFAULT_RETRY_CONFIG.shouldRetry,
+      validateResponse,
       onRetry,
       onMaxRetriesExceeded,
+      onInvalidResponse,
     } = retryConfig;
 
     let lastError: unknown;
@@ -187,7 +214,15 @@ class RouterModel<T extends string = string> implements LanguageModelV1 {
 
     while (attempt <= maxRetries) {
       try {
-        return await Promise.resolve(fn());
+        const result = await Promise.resolve(fn());
+
+        // Validate response if validator is provided
+        if (validateResponse && !validateResponse(result)) {
+          onInvalidResponse?.(result, attempt);
+          throw new ResponseValidationError(result);
+        }
+
+        return result;
       } catch (error) {
         lastError = error;
         attempt++;

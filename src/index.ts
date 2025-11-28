@@ -4,7 +4,7 @@
  * @module ai-sdk-router
  */
 
-export { createRouter } from './router.js';
+export { createRouter, ResponseValidationError } from './router.js';
 export type {
   RouterConfig,
   RouterRequest,

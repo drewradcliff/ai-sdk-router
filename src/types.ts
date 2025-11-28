@@ -27,12 +27,19 @@ export type RetryConfig = {
   backoffMultiplier?: number;
   /** Function to determine if an error should trigger a retry */
   shouldRetry?: (error: unknown, attempt: number) => boolean;
+  /**
+   * Function to validate a successful response. Return false to trigger retry/fallback.
+   * Useful for handling APIs that return 200 OK with error bodies (like Anthropic's OVERLOADED_ERROR)
+   */
+  validateResponse?: (response: unknown) => boolean;
   /** Callback invoked before each retry attempt */
   onRetry?: (error: unknown, attempt: number, delayMs: number) => void;
   /** Callback invoked when all retries are exhausted */
   onMaxRetriesExceeded?: (error: unknown, attempts: number) => void;
   /** Callback invoked when falling back to the next model in a chain */
   onFallback?: (error: unknown, fromModel: LanguageModelV1, toModel: LanguageModelV1) => void;
+  /** Callback invoked when validateResponse returns false */
+  onInvalidResponse?: (response: unknown, attempt: number) => void;
 };
 
 /**

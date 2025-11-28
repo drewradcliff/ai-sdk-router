@@ -1173,3 +1173,205 @@ describe('Fallback chain behavior', () => {
     expect(onMaxRetriesSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('validateResponse', () => {
+  // Helper to create a model that returns 200 OK but with error in body (like Anthropic's OVERLOADED_ERROR)
+  function createOverloadedMockModel(
+    id: string,
+    overloadedCount: number
+  ): LanguageModelV1 & { callCount: number } {
+    let callCount = 0;
+    return {
+      specificationVersion: 'v1',
+      provider: 'mock',
+      modelId: id,
+      defaultObjectGenerationMode: 'json',
+      get callCount() {
+        return callCount;
+      },
+      doGenerate: vi.fn(async () => {
+        callCount++;
+        if (callCount <= overloadedCount) {
+          // Simulates Anthropic's 200 OK with OVERLOADED_ERROR in body
+          return {
+            text: '',
+            finishReason: 'error' as const,
+            usage: { promptTokens: 0, completionTokens: 0 },
+            rawCall: { rawPrompt: {}, rawSettings: {} },
+            response: {
+              type: 'overloaded_error',
+              message: 'Overloaded',
+            },
+          };
+        }
+        return {
+          text: `Response from ${id}`,
+          finishReason: 'stop' as const,
+          usage: { promptTokens: 10, completionTokens: 20 },
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+      doStream: vi.fn(async () => {
+        callCount++;
+        if (callCount <= overloadedCount) {
+          return {
+            stream: new ReadableStream(),
+            rawCall: { rawPrompt: {}, rawSettings: {} },
+            response: {
+              type: 'overloaded_error',
+              message: 'Overloaded',
+            },
+          };
+        }
+        return {
+          stream: new ReadableStream(),
+          rawCall: { rawPrompt: {}, rawSettings: {} },
+        };
+      }),
+    } as LanguageModelV1 & { callCount: number };
+  }
+
+  it('should retry when validateResponse returns false', async () => {
+    const model = createOverloadedMockModel('claude', 2);
+
+    const router = createRouter({
+      models: [model],
+      retry: {
+        maxRetries: 3,
+        initialDelay: 10,
+        validateResponse: (response: unknown) => {
+          const res = response as { response?: { type?: string } };
+          return res.response?.type !== 'overloaded_error';
+        },
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    // Should have retried twice and succeeded on third attempt
+    expect(model.callCount).toBe(3);
+    expect(result.text).toBe('Response from claude');
+  });
+
+  it('should call onInvalidResponse when validateResponse returns false', async () => {
+    const onInvalidResponseSpy = vi.fn();
+    const model = createOverloadedMockModel('claude', 1);
+
+    const router = createRouter({
+      models: [model],
+      retry: {
+        maxRetries: 3,
+        initialDelay: 10,
+        validateResponse: (response: unknown) => {
+          const res = response as { response?: { type?: string } };
+          return res.response?.type !== 'overloaded_error';
+        },
+        onInvalidResponse: onInvalidResponseSpy,
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await router.doGenerate(options);
+
+    expect(onInvalidResponseSpy).toHaveBeenCalledTimes(1);
+    expect(onInvalidResponseSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        response: { type: 'overloaded_error', message: 'Overloaded' },
+      }),
+      0
+    );
+  });
+
+  it('should fallback to next model when validateResponse fails on all retries', async () => {
+    const model1 = createOverloadedMockModel('claude', 100); // Always overloaded
+    const model2 = createMockModel('gpt-4');
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: {
+        maxRetries: 2,
+        initialDelay: 10,
+        validateResponse: (response: unknown) => {
+          const res = response as { response?: { type?: string } };
+          return res.response?.type !== 'overloaded_error';
+        },
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doGenerate(options);
+
+    // Should have tried model1 3 times (1 + 2 retries) then fallen back to model2
+    expect(model1.callCount).toBe(3);
+    expect(model2.doGenerate).toHaveBeenCalledTimes(1);
+    expect(result.text).toBe('Response from gpt-4');
+  });
+
+  it('should work with doStream and validateResponse', async () => {
+    const model = createOverloadedMockModel('claude', 1);
+
+    const router = createRouter({
+      models: [model],
+      retry: {
+        maxRetries: 2,
+        initialDelay: 10,
+        validateResponse: (response: unknown) => {
+          const res = response as { response?: { type?: string } };
+          return res.response?.type !== 'overloaded_error';
+        },
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    const result = await router.doStream(options);
+
+    expect(model.callCount).toBe(2);
+    expect(result.stream).toBeDefined();
+  });
+
+  it('should throw ResponseValidationError when all models fail validation', async () => {
+    const model1 = createOverloadedMockModel('claude', 100);
+    const model2 = createOverloadedMockModel('gpt', 100);
+
+    const router = createRouter({
+      models: [model1, model2],
+      retry: {
+        maxRetries: 1,
+        initialDelay: 10,
+        validateResponse: (response: unknown) => {
+          const res = response as { response?: { type?: string } };
+          return res.response?.type !== 'overloaded_error';
+        },
+      },
+    });
+
+    const options: LanguageModelV1CallOptions = {
+      inputFormat: 'prompt',
+      mode: { type: 'regular' },
+      prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    };
+
+    await expect(router.doGenerate(options)).rejects.toThrow('Response validation failed');
+  });
+});

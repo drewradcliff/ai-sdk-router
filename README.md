@@ -45,7 +45,7 @@ const model = createRouter({
 });
 ```
 
-### Routing with with tiers
+### Routing with tiers
 
 ```ts
 const model = createRouter({
@@ -64,5 +64,29 @@ const model = createRouter({
 const result = await generateText({
   model,
   prompt: 'Explain quantum computing',
+});
+```
+
+### Handling 200 OK with error bodies (Anthropic's OVERLOADED_ERROR)
+
+Some APIs return `200 OK` with errors in the response body. Use `validateResponse` to detect these and trigger retry/fallback:
+
+```ts
+const model = createRouter({
+  models: [
+    anthropic('claude-sonnet-4-20250514'),
+    openai('gpt-4o'), // fallback when Claude is overloaded
+  ],
+  retry: {
+    maxRetries: 3,
+    validateResponse: (response) => {
+      // Return false to trigger retry/fallback
+      const res = response as { response?: { type?: string } };
+      return res.response?.type !== 'overloaded_error';
+    },
+    onInvalidResponse: (response, attempt) => {
+      console.log(`Invalid response on attempt ${attempt}:`, response);
+    },
+  },
 });
 ```
