@@ -16,6 +16,40 @@ npm install ai @ai-sdk/openai @ai-sdk/anthropic
 
 ## Usage
 
+### Routing with tiers
+
+```ts
+const model = createRouter({
+  models: {
+    fast: openai('gpt-3.5-turbo'),
+    deep: anthropic('claude-3-5-sonnet-20241022'),
+  },
+  select: (request) => {
+    if (request.prompt && request.prompt.length > 1000) {
+      return 'deep';
+    }
+    return 'fast';
+  },
+});
+
+const result = await generateText({
+  model,
+  prompt: 'Explain quantum computing',
+});
+```
+
+### Routing based on environment
+
+```ts
+const model = createRouter({
+  models: {
+    development: ollama('llama3'),
+    production: openai('gpt-4o'),
+  },
+  select: () => process.env.NODE_ENV,
+})
+```
+
 ### Simple fallback chain
 
 ```ts
@@ -45,28 +79,6 @@ const model = createRouter({
     maxRetries: 5,
     initialDelay: 500,
   },
-});
-```
-
-### Routing with tiers
-
-```ts
-const model = createRouter({
-  models: {
-    fast: openai('gpt-3.5-turbo'),
-    deep: anthropic('claude-3-5-sonnet-20241022'),
-  },
-  select: (request) => {
-    if (request.prompt && request.prompt.length > 1000) {
-      return 'deep';
-    }
-    return 'fast';
-  },
-});
-
-const result = await generateText({
-  model,
-  prompt: 'Explain quantum computing',
 });
 ```
 
