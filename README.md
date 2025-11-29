@@ -25,7 +25,10 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { generateText } from 'ai';
 
 // Tries gpt-4 first, falls back to claude if it fails
-const model = createRouter([openai('gpt-4'), anthropic('claude-3-5-sonnet-20241022')]);
+const model = createRouter([
+  openai('gpt-4'),
+  anthropic('claude-3-5-sonnet-20241022')
+]);
 
 const result = await generateText({
   model,
@@ -67,7 +70,7 @@ const result = await generateText({
 });
 ```
 
-### Handling 200 OK with error bodies (Anthropic's OVERLOADED_ERROR)
+### Validate response
 
 Some APIs return `200 OK` with errors in the response body. Use `validateResponse` to detect these and trigger retry/fallback:
 
@@ -79,9 +82,8 @@ const model = createRouter({
   ],
   retry: {
     maxRetries: 3,
-    validateResponse: (response) => {
+    validateResponse: (res) => {
       // Return false to trigger retry/fallback
-      const res = response as { response?: { type?: string } };
       return res.response?.type !== 'overloaded_error';
     },
     onInvalidResponse: (response, attempt) => {
