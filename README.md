@@ -16,7 +16,7 @@ npm install ai @ai-sdk/openai @ai-sdk/anthropic
 
 ## Usage
 
-### Simple fallback chain (array form)
+### Simple fallback chain
 
 ```ts
 import { createRouter } from 'ai-sdk-router';
